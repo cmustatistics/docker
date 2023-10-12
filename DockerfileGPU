@@ -1,0 +1,54 @@
+#####################################################
+# Currently, this file with GPU support
+# succeeds in the computer provided by IMHPC but fails
+# when run on the ghidorahs. It does work on the
+# hydras because only the CPU used.
+#####################################################
+
+#####################################################
+# Dockerfile
+#####################################################
+# For Tensorflow 2 base image with GPU support use:
+#   nvcr.io/nvidia/tensorflow:23.07-tf2-py3
+# For Pytorch base image with GPU support use:
+#   nvcr.io/nvidia/pytorch:23.07-py3
+# All Tensorflow images can be found at:
+#   https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tensorflow
+# Details regarding dependencies installed in each Tensorflow image are available at:
+#   https://docs.nvidia.com/deeplearning/deeplearning/frameworks/tensorflow-release-notes/index.html
+# All Pytorch images can be found at:
+#   https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch
+# Details regarding dependencies installed in each Pytorch image are available at:
+#   https://docs.nvidia.com/deeplearning/deeplearning/frameworks/pytorch-release-notes/index.html
+# Other base images can be found at
+#   https://catalog.ngc.nvidia.com/containers
+# Note: Nvidia images have a folder at /workspace with documentation about the image
+FROM nvcr.io/nvidia/tensorflow:20.08-tf2-py3
+
+# We install additional packages required for this particular project
+# Do indicate which version you need so that the script is determistic. 
+# If you do not specify the version, pip will try to install the lastest available
+# version that is compatible with your other packages
+RUN pip install tqdm==4.43.0
+RUN pip install matplotlib==3.3.0
+RUN pip install pandas==1.0.5
+RUN pip install GPy==1.9.9
+RUN pip install packaging==20.3
+RUN pip install gpflow==2.1.0
+
+# We copy the folder containing the source code of our algorithm 
+# into the folder /program/src in the container
+COPY src /program/src
+
+# If you want to exclude any files inside the above directories
+# You should add the exeptions to .dockerignore
+
+# We set the working directory to program
+# So that bash starts at /program when, we loggin into the container
+WORKDIR /program
+
+
+
+
+
+

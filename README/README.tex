@@ -1,0 +1,313 @@
+\documentclass[12pt, letterpaper, onecolumn]{article}
+\usepackage[letterpaper, total={6.5in, 9in}]{geometry}
+\setlength{\parskip}{0.5em} % space between paragraphs
+\setlength{\parindent}{0pt} % identation space
+\setlength{\jot}{10pt} % space between equations
+
+%\addtolength{\hoffset}{-1cm}
+%\addtolength{\textwidth}{1.5cm}
+
+%\addtolength{\voffset}{-1.5cm}
+%\addtolength{\textheight}{2cm}
+
+% for Python code
+\usepackage[utf8]{inputenc}
+\usepackage{listingsutf8}
+\usepackage[dvipsnames]{xcolor}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+backgroundcolor=\color{backcolour},   
+commentstyle=\color{codegreen},
+keywordstyle=\color{magenta},
+numberstyle=\tiny\color{codegray},
+stringstyle=\color{codepurple},
+basicstyle=\ttfamily\footnotesize,
+breakatwhitespace=false,         
+breaklines=true,                 
+captionpos=b,                    
+keepspaces=true,                 
+numbers=left,                    
+numbersep=5pt,                  
+showspaces=false,                
+showstringspaces=false,
+showtabs=false,               
+inputencoding=utf8,
+escapeinside={\%(*}{*)},
+tabsize=2
+}
+\lstset{style=mystyle}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Get table of contents with links
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage[pdfencoding=auto, psdextra]{hyperref}
+\hypersetup{
+colorlinks,
+citecolor=black,
+filecolor=black,
+linkcolor=black,
+urlcolor=black
+}
+
+% bookmarks
+\usepackage{bookmark}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Graphics
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{graphicx}
+\graphicspath{ {./img/} }
+
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{float}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% enumerate subsubsections
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% references
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{natbib}
+\bibliographystyle{plainnat}
+\usepackage{nameref} %get names of sections
+
+
+\usepackage{authblk}
+\title{Running Algorithms Locally and Remotely via Docker}
+\author[1]{Your computing committee}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\pagebreak
+
+\section{Introduction}
+
+This document explains the current software used to run locally and remotely algorithms inside Docker. The focus is on explaining the salient points of different scripts so that you can modify them to suit your algorithm. We won't explain the technicalities involved in using \texttt{docker}, \texttt{tmux} and \texttt{ssh}. For a basic introduction to those tools, the reader is referred to the wiki maintained by the statistics department at \href{https://www.stat.cmu.edu/computewiki/index.php}{stat.cmu.edu/computewiki}.
+
+The example project is a simplified version of \href{https://doi.org/10.1007/978-3-030-86523-8_32}{Sparse Information Filter for Fast Gaussian Process Regression (Kania et al. 2021)}, which proposes a method for training sparse Gaussian processes via mini-batches rather than full-batches.   
+
+The structure of the folder that contains this file is as follows \begin{itemize}
+	\item \texttt{Dockerfile} configures a docker image. At a basic level, it is a declaration of the environment where the algorithm will run.
+	\item \texttt{DockerfileGPU} configures a docker image with GPU support.
+	\item \texttt{.dockerignore} configures exceptions when creating the docker image
+	\item \texttt{rundocker.sh} runs the algorithm inside the container.
+	\item \texttt{src} contains the source code of the algorithm
+	\item \texttt{data} contains the data used for the experiments
+	\item \texttt{results} is the folder where the results of the experiments are saved
+	\item \texttt{utilities} contains useful scripts for remotely running algorithms
+	\item \texttt{README} contains the files needed to generate this document
+	\item \texttt{paper.pdf} The paper whose source code is used in this project. The algorithms implemented inside the \texttt{src} folder are explained in it. \texttt{supp.pdf} contains additional information.
+\end{itemize}
+
+Many of the code snippets shown in this document have been substantially simplified to reflect the essence of the scripts. However, the scripts in the root folder differ since they target a specific algorithm rather than a generic one. 
+
+\pagebreak
+
+\section{Running docker locally in your computer}
+
+\subsection{Install docker}
+
+Get the latest version of docker desktop from \href{https://docs.docker.com/desktop/}{docs.docker.com/desktop}. Once the installation finishes, please start docker desktop.
+
+\subsection{Configure a docker image}
+
+\texttt{Dockerfile} configures the docker image, that is, the environment containing all the dependencies necessary for running your algorithm. 
+
+We start by declaring a base image on which we will install further dependencies. For example, the following code provides a \texttt{linux} system with \texttt{python} 3.8 support. \begin{lstlisting}[language=Bash]
+FROM python:3.8-slim-buster
+\end{lstlisting} Consult the \texttt{Dockerfile} for further instructions on how to use a base image with \texttt{Pytorch} and \texttt{Tensroflow} with GPU support.
+
+On it, we might install further dependencies via \texttt{pip}. It is recommended to specify the version of the required dependencies. Otherwise, \texttt{pip} will install the latest version compatible with our other packages making the docker image non-deterministic. \begin{lstlisting}[language=Bash]
+# We install additional packages required for this particular project
+RUN pip install pandas==2.0.3
+\end{lstlisting}  
+
+Then, we copy the code required to run the algorithm and experiments \begin{lstlisting}[language=Bash]
+# We copy the folder containing the source code of our algorithm 
+# into the folder /program/src in the container
+COPY src /program/src
+\end{lstlisting}  
+
+We do not copy the data or results folders into the container. They will be mounted to the Docker container during runtime.
+
+\subsection{Building a docker container}
+
+Our next step is to start a Docker container based on our image. The script \texttt{rundocker.sh} simplifies the building procedure. To wit, it \begin{itemize}
+	\item creates a docker container based on the image defined in \texttt{Dockerfile}
+	\item mounts the data folder instead of copying it into the container. This avoids making images unnecessarily large due to large datasets. 
+	\item mounts the results folder instead of copying it into the container. Therefore, if the computer crashes, the saved data will remain after reboot.
+	\item runs an algorithm inside the container.
+\end{itemize}
+
+The most important part of the script is indicating the location of your algorithm's executable. Everything else in the file might be left untouched if you follow the conventions adopted by this tutorial.
+
+\begin{lstlisting}[language=Bash]
+#####################################################
+# Location of the executable inside the container
+#####################################################
+readonly executable=/program/experiments/runner.py
+\end{lstlisting}
+
+\subsection{Running an algorithm in the docker container}
+
+To run your container, execute the script \texttt{rundocker.sh}. You will immediately see the output of our algorithm. \begin{lstlisting}[language=Bash]
+bash rundocker.sh
+\end{lstlisting}  
+
+If you wish to pass arguments to your executable, you can do so by running \begin{lstlisting}[language=Bash]
+bash rundocker.sh your_arguments	
+\end{lstlisting} Then, you can then parse \texttt{your\_arguments} inside your script.
+
+\pagebreak
+
+\section{Remotely running one instance of the algorithm}
+
+\subsection{Configure the server}
+
+A ssh connection to the server can be configured at \texttt{~/.ssh/config}. For example, using the following code, you can configure access to \texttt{hydra1.stat.cmu.edu}.
+
+\begin{lstlisting}[language=Bash]
+Host hydra1
+	Hostname hydra1.stat.cmu.edu
+	Port 22
+	user your_usename
+	IdentityFile ~/.ssh/your_public_key_file
+	ServerAliveInterval 180
+\end{lstlisting}  
+
+Thus, we execute \begin{lstlisting}[language=Bash]
+ssh hydra1
+\end{lstlisting} in the terminal, \texttt{ssh} will automatically connect to \texttt{hydra1.stat.cmu.edu} using the public key \texttt{\~/.ssh/your\_public\_key\_file}. 
+
+\subsection{Copying your files to the remote server}
+
+We can copy all the files in this folder to \texttt{hydra1} using \texttt{scp} \begin{lstlisting}[language=Bash]
+scp -r $PWD hydra1:~/remote/sparsegp
+\end{lstlisting} 
+
+
+\subsection{Remote execution and monitoring}
+
+After running the command in the previous section, \texttt{rundocker.sh} will be located at \texttt{~/remote/rundocker.sh}. You can use the utility \texttt{distribute.sh} to connect to the remote server and run your \texttt{rundocker.sh} script.
+
+\begin{lstlisting}[language=Bash]
+bash distribute.sh --server hydra1 --session TEST --rundocker "~/remote/sparsegp"
+\end{lstlisting}  
+
+\texttt{distribute.sh} connects to the \texttt{hydra1} server, and runs the \texttt{rundocker.sh} script inside a \texttt{tmux} session called \texttt{TEST}. 
+
+To observe the output of our algorithm, we can use the \texttt{process.sh} utility. Specify the \texttt{tmux} session name and the server as follows. 
+
+\begin{lstlisting}[language=Bash]
+bash process.sh --session TEST --server hydra1
+\end{lstlisting}   
+
+\pagebreak
+
+\section{Remotely running multiple instances of your algorithm}
+
+You can run one instance per server of your algorithm with different parameters in each server. This is useful if you run the same experiments multiple times with different parameters.
+
+\subsection{Configure the servers}
+
+We configure four servers at \texttt{~/.ssh/config}, two \texttt{ghidorahs} and two \texttt{hydras}.
+
+\begin{lstlisting}[language=Bash]
+Host ghidorah2
+	Hostname ghidorah2.stat.cmu.edu
+	Port 22
+	user your_usename
+	IdentityFile ~/.ssh/your_public_key_file
+	ServerAliveInterval 180
+Host ghidorah3
+	Hostname ghidorah3.stat.cmu.edu
+	Port 22
+	user your_usename
+	IdentityFile ~/.ssh/your_public_key_file
+	ServerAliveInterval 180
+Host hydra1
+	Hostname hydra1.stat.cmu.edu
+	Port 22
+	user your_usename
+	IdentityFile ~/.ssh/your_public_key_file
+	ServerAliveInterval 180
+Host hydra2
+	Hostname hydra2.stat.cmu.edu
+	Port 22
+	user your_usename
+	IdentityFile ~/.ssh/your_public_key_file
+	ServerAliveInterval 180
+\end{lstlisting}  
+
+Subsequently, we specify the servers where you want to run the instances of your algorithm in \texttt{servers.sh} \begin{lstlisting}[language=Bash]
+# Declare servers to be used for running your scripts
+servers=(
+ ghidorah2
+ ghidorah3
+ hydra1
+ hydra2
+)
+\end{lstlisting}  	
+
+\subsection{Remote execution and monitoring}
+
+The process is analogous to running one instance, but we must iterate over the declared servers in \texttt{server.sh}. The utility \texttt{experiments.sh} gives one example of how to achieve this. In short, we load the server configuration by executing \begin{lstlisting}[language=Bash]
+#############################################
+# load servers
+#############################################
+. servers.sh
+\end{lstlisting}  
+
+Then, we declare an array with the parameters that we want to pass to the algorithm \begin{lstlisting}[language=Bash]
+#############################################
+# Declare parameters that change from server to server
+#############################################
+parameters=(
+ param_for_ghidorah2
+ param_for_ghidorah3
+ param_for_hydra1
+ param_for_hydra2
+)
+\end{lstlisting}  and iterate over the servers \begin{lstlisting}[language=Bash]
+#############################################
+# We iterate over the servers and run the script
+# with different parameters in each one of them
+#############################################
+for i in "${!parameters[@]}"; do
+	./distribute.sh --server "${servers[i]}"  	\
+	--session PARAMETERS      					\
+	--rundocker "~/remote/" 					\
+	"${parameters[i]}"    						\
+done
+\end{lstlisting}  
+
+We can run the script via bash \begin{lstlisting}[language=Bash]
+bash experiments.sh
+\end{lstlisting}  
+
+To monitor the four instances, we can execute \begin{lstlisting}[language=Bash]
+bash process.sh --session TEST	
+\end{lstlisting} Note that we specify the session but not the server. The utility \texttt{process.sh} will iterate over the servers declared in \texttt{servers.sh} and connect to each session.
+
+\subsection{Resetting everything}
+
+If you want to stop the container in all the servers specified in \texttt{servers.sh}, execute \begin{lstlisting}[language=Bash]
+bash clean.sh
+\end{lstlisting}  	
+
+\end{document}
